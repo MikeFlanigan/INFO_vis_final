@@ -1,10 +1,12 @@
 import requests
 from bs4 import BeautifulSoup
+import bs4
 import time
 import random
 import datetime as dt
 import os
 import pickle
+import re
 
 root_url = "https://www.mountainproject.com/route-guide"
 
@@ -32,13 +34,15 @@ class mntNode:
         self.areas_list = [] # list of areas in order of big umbrella to small
         
         if self.leaf:
-            self.title = ""
-            self.type = "" # might enumerate this
+            self.title = "" # same as entry name
+            self.type = "" # raw from the "Type:" mntproj field for now
+            # after gathering might add more parsed types to this dict
             self.grade = "" # probably won't enumerate this
-            self.FA = "" # general data
+            self.FA = "" # raw from the "FA:" mntproj field for now
             self.FA_yr = 0 # parsed date if available
             self.FA_month = 0 # parsed date if available
             self.FAers = [] # list of climbers who got the FA if available
+            self.shared_by = "" # mountain project submission info, could be cool to have
 
 
 pre_loaded_dict = False        
@@ -87,6 +91,11 @@ if not pre_loaded_dict:
                     print('WOAHHHHHHHHHHHH unexpected')
 
 
+'''
+TODO items
+- areas list doens't seem to be working. saving to many items
+'''
+
 # begin BFS through site. Making assumption this is a tree and no node has two parents
 
 start_time = dt.datetime.now()
@@ -111,7 +120,35 @@ try:
 
         if is_a_route:
             # gather and log route data
-            print('is a route, so pass for now and keep in the queue')
+            graph_dict[current_node].title = current_node
+
+            graph_dict[current_node].type = soup.find('td',text = re.compile('Type:')).find_next('td').text.strip()
+            graph_dict[current_node].FA = soup.find('td',text = re.compile('FA:')).find_next('td').text.strip()
+
+            shared_by_string = ''
+            temp = soup.find('td',text = re.compile('Shared By:')).find_next('td').text.strip()
+            for word in temp.split():
+                shared_by_string += word
+                shared_by_string += ' '
+            graph_dict[current_node].shared_by = shared_by_string
+            
+            grade_string = ''
+            grade_info = soup.find('h2',{'class':'inline-block mr-2'}).contents
+            index = 0
+            for i in grade_info:
+                if type(i) == bs4.element.Tag:
+                    grade_string += i.text.strip()
+                if type(i) == bs4.element.NavigableString:
+                    if len(i.strip()) == 0:
+                        if index != len(grade_info): grade_string += ', '
+                    else:
+                        grade_string += i.strip()
+                        if index != len(grade_info): grade_string += ', '
+                index += 1
+                        
+            graph_dict[current_node].grade = grade_string
+
+            print('Cataloged route: ',current_node)
             pass
         else: # find children, which could be routes or areas
             left_nav_items = soup.find_all('div',{'class':'lef-nav-row'})
@@ -158,7 +195,7 @@ try:
         # check they aren't in the graph already, if not
         # append them to queue --- and substantiate and make each one
 
-        if iters > 10:
+        if iters > 4000:
             print('early stop due to testing iters limit')
             print(' ')
             print(len(graph_dict.keys()),' routes/areas catalogued so far')
@@ -166,7 +203,12 @@ try:
             with open('mnt_proj_crawl_queue.p', 'wb') as fp: pickle.dump(crawl_queue, fp, protocol=pickle.HIGHEST_PROTOCOL)
             break
         iters += 1
-        
+
+    print(' ')
+    print('terminated due to finishing the crawl queue!')
+    with open('mnt_proj_graph_dictionary.p', 'wb') as fp: pickle.dump(graph_dict, fp, protocol=pickle.HIGHEST_PROTOCOL)
+    with open('mnt_proj_crawl_queue.p', 'wb') as fp: pickle.dump(crawl_queue, fp, protocol=pickle.HIGHEST_PROTOCOL)
+    
 except KeyboardInterrupt:
     print('stopped due to keyboard interrupt')
     with open('mnt_proj_graph_dictionary.p', 'wb') as fp: pickle.dump(graph_dict, fp, protocol=pickle.HIGHEST_PROTOCOL)
