@@ -1,0 +1,174 @@
+import requests
+from bs4 import BeautifulSoup
+import time
+import random
+import datetime as dt
+import os
+import pickle
+
+root_url = "https://www.mountainproject.com/route-guide"
+
+node_url = "https://www.mountainproject.com/area/"
+leaf_url = 'https://www.mountainproject.com/route/'
+
+# min and max seconds to pause for before scraping again
+# this is to prevent predictable scraping and getting banned
+sleep_max = 3 
+sleep_min = 0.75
+
+# set up a class for storing tree structure data from mountain project
+class mntNode:
+    def __init__(self, leaf, depth):
+        # tree structure data
+        if leaf: self.leaf = True # true if this is a climb, false otherwise
+        else: self.leaf = False
+        self.url = ''
+        self.parent = ''
+        self.depth = depth # depth of layer in tree
+        if not self.leaf:
+            self.children = []        
+
+        # climbing data
+        self.areas_list = [] # list of areas in order of big umbrella to small
+        
+        if self.leaf:
+            self.title = ""
+            self.type = "" # might enumerate this
+            self.grade = "" # probably won't enumerate this
+            self.FA = "" # general data
+            self.FA_yr = 0 # parsed date if available
+            self.FA_month = 0 # parsed date if available
+            self.FAers = [] # list of climbers who got the FA if available
+
+
+pre_loaded_dict = False        
+if os.path.isfile('mnt_proj_graph_dictionary.p'):
+    with open('mnt_proj_graph_dictionary.p', 'rb') as fp:
+        graph_dict = pickle.load(fp)
+        pre_loaded_dict = True
+        print('LOADED PRIOR GRAPH DICTIONARY')
+else: graph_dict = {}
+
+if os.path.isfile('mnt_proj_crawl_queue.p'):
+    with open('mnt_proj_crawl_queue.p', 'rb') as fp:
+        crawl_queue = pickle.load(fp)
+        print('LOADED PRIOR CRAWL QUEUE')
+else: crawl_queue = [] # initializing BFS search queue 
+
+if not pre_loaded_dict:
+    print('1 second pause, to prevent rapid pinging websites...')
+    time.sleep(1)
+    page = requests.get(url = root_url)
+    soup = BeautifulSoup(page.content, 'html.parser')
+
+    # kind of a fake node, but could make a cool vis
+    graph_dict['Mountain Project']= mntNode(False,0)
+    graph_dict['Mountain Project'].url = root_url
+    
+    # gather up the names of every root node ---- this only works for the initial route-guide page
+    strong_divs = soup.findAll("strong")
+    for div in strong_divs:
+        if div.find('a') != None:
+            name_tags = div.find_all('a',href=True)
+            for item in name_tags:
+                if node_url in item['href']:
+                    # found a node                
+                    area_name = item.text
+                    if not area_name in graph_dict.keys():
+                        graph_dict[area_name]= mntNode(False,1)
+                        graph_dict[area_name].areas_list.append(area_name)
+                        graph_dict[area_name].url = item['href']
+                        graph_dict['Mountain Project'].children.append(area_name)
+                        
+                        crawl_queue.append(area_name) # add children to queue
+                        print('Added ',area_name) 
+                elif leaf_url in item['href']:
+                    # found a leaf node
+                    print('WOAHHHHHHHHHHHH unexpected')
+
+
+# begin BFS through site. Making assumption this is a tree and no node has two parents
+
+start_time = dt.datetime.now()
+iters = 0
+try:
+    while len(crawl_queue) > 0:
+        print(' ')
+        print('elapsed run time: ',(dt.datetime.now()-start_time).seconds,' seconds')
+
+        # load the webpage
+        sleep_time = random.random()*(sleep_max-sleep_min)+sleep_min
+        time.sleep(sleep_time) # 1 second pause, to prevent rapid pinging websites...
+
+        current_node = crawl_queue.pop(0)
+        current_node_url = graph_dict[current_node].url
+
+        print('searching: ',current_node)
+        is_a_route = graph_dict[current_node].leaf
+        
+        page = requests.get(url = current_node_url)
+        soup = BeautifulSoup(page.content, 'html.parser')
+
+        if is_a_route:
+            # gather and log route data
+            print('is a route, so pass for now and keep in the queue')
+            pass
+        else: # find children, which could be routes or areas
+            left_nav_items = soup.find_all('div',{'class':'lef-nav-row'})
+            for entry in left_nav_items:
+                entry_url = entry.find('a',href=True)
+                if (node_url in entry_url['href']) or (leaf_url in entry_url['href']):
+                    entry_name = entry_url.text
+                    if not entry_name in graph_dict.keys():
+                        graph_dict[entry_name]= mntNode(leaf_url in entry_url['href'],graph_dict[current_node].depth+1)
+                        graph_dict[entry_name].url = entry_url['href']
+                        graph_dict[entry_name].parent = current_node
+                        graph_dict[current_node].children.append(entry_name)
+                        
+                        graph_dict[entry_name].areas_list = graph_dict[current_node].areas_list
+                        if node_url in entry_url['href']:
+                            graph_dict[entry_name].areas_list.append(entry_name)
+                            
+                        crawl_queue.append(entry_name) # add children to queue
+                        print('Added ',entry_name)
+                else:
+                    print('EROROROROER unexpected, not route or area')
+
+            if len(left_nav_items) == 0: # only have routes under this page
+                for entry_url in soup.find_all('a',href=True):
+                    if leaf_url in entry_url['href']:
+                        entry_name = entry_url.text
+                        if (not entry_name in graph_dict.keys()) and (not '\n' in entry_name):
+                            graph_dict[entry_name]= mntNode(True,graph_dict[current_node].depth+1)
+                            graph_dict[entry_name].url = entry_url['href']
+                            graph_dict[entry_name].areas_list = graph_dict[current_node].areas_list
+                            graph_dict[entry_name].parent = current_node
+                            graph_dict[current_node].children.append(entry_name)
+                    
+                            crawl_queue.append(entry_name) # add children to queue
+                            print('Added ',entry_name)
+
+                    
+                        
+            
+        
+        # find children areas of node... # really need to detect if it is an area or route
+        # seems to be an <h3>Routes in ....</h3> vs <h3>Areas in ...</h3>
+        # whatever children the current node has
+        # check they aren't in the graph already, if not
+        # append them to queue --- and substantiate and make each one
+
+        if iters > 10:
+            print('early stop due to testing iters limit')
+            print(' ')
+            print(len(graph_dict.keys()),' routes/areas catalogued so far')
+            with open('mnt_proj_graph_dictionary.p', 'wb') as fp: pickle.dump(graph_dict, fp, protocol=pickle.HIGHEST_PROTOCOL)
+            with open('mnt_proj_crawl_queue.p', 'wb') as fp: pickle.dump(crawl_queue, fp, protocol=pickle.HIGHEST_PROTOCOL)
+            break
+        iters += 1
+        
+except KeyboardInterrupt:
+    print('stopped due to keyboard interrupt')
+    with open('mnt_proj_graph_dictionary.p', 'wb') as fp: pickle.dump(graph_dict, fp, protocol=pickle.HIGHEST_PROTOCOL)
+    with open('mnt_proj_crawl_queue.p', 'wb') as fp: pickle.dump(crawl_queue, fp, protocol=pickle.HIGHEST_PROTOCOL)
+    
