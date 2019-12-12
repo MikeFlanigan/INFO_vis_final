@@ -15,8 +15,8 @@ leaf_url = 'https://www.mountainproject.com/route/'
 
 # min and max seconds to pause for before scraping again
 # this is to prevent predictable scraping and getting banned
-sleep_max = 3 
-sleep_min = 0.75
+sleep_max = 0.15
+sleep_min = 0.01
 
 # set up a class for storing tree structure data from mountain project
 class mntNode:
@@ -98,10 +98,14 @@ TODO items
 
 # begin BFS through site. Making assumption this is a tree and no node has two parents
 
+session_areas_count = 0
+session_routes_count = 0
+
 start_time = dt.datetime.now()
 iters = 0
-try:
-    while len(crawl_queue) > 0:
+error_count = 0
+while len(crawl_queue) > 0:
+    try:
         print(' ')
         print('elapsed run time: ',(dt.datetime.now()-start_time).seconds,' seconds')
 
@@ -149,8 +153,11 @@ try:
             graph_dict[current_node].grade = grade_string
 
             print('Cataloged route: ',current_node)
-            pass
+            
+            session_routes_count += 1
+            
         else: # find children, which could be routes or areas
+            session_areas_count += 1
             left_nav_items = soup.find_all('div',{'class':'lef-nav-row'})
             for entry in left_nav_items:
                 entry_url = entry.find('a',href=True)
@@ -187,7 +194,7 @@ try:
 
                     
                         
-            
+        print('session areas count: ',session_areas_count,' routes count: ',session_routes_count)
         
         # find children areas of node... # really need to detect if it is an area or route
         # seems to be an <h3>Routes in ....</h3> vs <h3>Areas in ...</h3>
@@ -195,7 +202,8 @@ try:
         # check they aren't in the graph already, if not
         # append them to queue --- and substantiate and make each one
 
-        if iters > 4000:
+        if False:
+            #if iters > 4000:
             print('early stop due to testing iters limit')
             print(' ')
             print(len(graph_dict.keys()),' routes/areas catalogued so far')
@@ -204,13 +212,24 @@ try:
             break
         iters += 1
 
-    print(' ')
-    print('terminated due to finishing the crawl queue!')
-    with open('mnt_proj_graph_dictionary.p', 'wb') as fp: pickle.dump(graph_dict, fp, protocol=pickle.HIGHEST_PROTOCOL)
-    with open('mnt_proj_crawl_queue.p', 'wb') as fp: pickle.dump(crawl_queue, fp, protocol=pickle.HIGHEST_PROTOCOL)
+    except KeyboardInterrupt:
+        print('stopped due to keyboard interrupt')
+        break
+
+    except:
+        print('unknown error')
+        time.sleep(30) # in case it was internet connection
+        error_count += 1
+        if error_count > 20:
+            print('stopped due to excesive error count')
+            break
+
     
-except KeyboardInterrupt:
-    print('stopped due to keyboard interrupt')
-    with open('mnt_proj_graph_dictionary.p', 'wb') as fp: pickle.dump(graph_dict, fp, protocol=pickle.HIGHEST_PROTOCOL)
-    with open('mnt_proj_crawl_queue.p', 'wb') as fp: pickle.dump(crawl_queue, fp, protocol=pickle.HIGHEST_PROTOCOL)
+
+print(' ')
+if len(crawl_queue) == 0: print('terminated due to finishing the crawl queue!')
+with open('mnt_proj_graph_dictionary.p', 'wb') as fp: pickle.dump(graph_dict, fp, protocol=pickle.HIGHEST_PROTOCOL)
+with open('mnt_proj_crawl_queue.p', 'wb') as fp: pickle.dump(crawl_queue, fp, protocol=pickle.HIGHEST_PROTOCOL)
     
+
+
